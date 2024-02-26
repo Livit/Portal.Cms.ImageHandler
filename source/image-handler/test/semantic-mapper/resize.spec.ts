@@ -10,7 +10,7 @@ describe("resize", () => {
 
     // Act
     const customMapper = new SemanticMapper();
-    const edits = customMapper.mapPathToEdits(path);
+    const edits = customMapper.mapPathToEdits({ path });
 
     // Assert
     const expectedResult = {
@@ -25,7 +25,7 @@ describe("resize", () => {
 
     // Act
     const customMapper = new SemanticMapper();
-    const edits = customMapper.mapPathToEdits(path);
+    const edits = customMapper.mapPathToEdits({ path });
 
     // Assert
     const expectedResult = {
@@ -40,7 +40,7 @@ describe("resize", () => {
 
     // Act
     const customMapper = new SemanticMapper();
-    const edits = customMapper.mapPathToEdits(path);
+    const edits = customMapper.mapPathToEdits({ path });
 
     // Assert
     const expectedResult = {
@@ -55,7 +55,7 @@ describe("resize", () => {
 
     // Act
     const customMapper = new SemanticMapper();
-    const edits = customMapper.mapPathToEdits(path);
+    const edits = customMapper.mapPathToEdits({ path });
 
     // Assert
     const expectedResult = {
@@ -70,7 +70,7 @@ describe("resize", () => {
 
     // Act
     const customMapper = new SemanticMapper();
-    const edits = customMapper.mapPathToEdits(path);
+    const edits = customMapper.mapPathToEdits({ path });
 
     // Assert
     const expectedResult = {

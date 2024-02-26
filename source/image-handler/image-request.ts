@@ -253,7 +253,7 @@ export class ImageRequest {
       return thumborMapping.mapPathToEdits(event.path);
     } else if (requestType === RequestTypes.SEMANTIC) {
       const semanticMapping = new SemanticMapper();
-      return semanticMapping.mapPathToEdits(event.path);
+      return semanticMapping.mapPathToEdits(event);
     } else if (requestType === RequestTypes.CUSTOM) {
       const thumborMapping = new ThumborMapper();
       const parsedPath = thumborMapping.parseCustomPath(event.path);
@@ -287,7 +287,7 @@ export class ImageRequest {
       const match = path.match(regex);
 
       if (match) {
-        return match[1];
+        return decodeURIComponent(match[1]);
       } else
         throw new ImageHandlerError(
           StatusCodes.NOT_FOUND,

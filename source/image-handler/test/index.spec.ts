@@ -13,8 +13,6 @@ describe("index", () => {
   process.env.SOURCE_BUCKETS = "source-bucket";
   const mockImage = Buffer.from("SampleImageContent\n");
   const mockFallbackImage = Buffer.from("SampleFallbackImageContent\n");
-  
-
 
   it("should return the image when there is no error", async () => {
     // Mock
@@ -50,8 +48,6 @@ describe("index", () => {
     });
     expect(result).toEqual(expectedResult);
   });
-
-
 
   it("should return the image with custom headers when custom headers are provided", async () => {
     // Mock
