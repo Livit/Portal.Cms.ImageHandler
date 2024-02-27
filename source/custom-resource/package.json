@@ -12,7 +12,11 @@
   "scripts": {
     "clean": "rm -rf node_modules/ dist/ coverage/",
     "pretest": "npm run clean && npm ci",
-    "test": "jest --coverage --silent"
+    "test": "jest --coverage --silent",
+    "build:init": "rm -rf dist && rm -rf node_modules",
+    "build:zip": "zip -rq custom-resource.zip .",
+    "build:dist": "mkdir dist && mv custom-resource.zip dist/",
+    "build": "npm run build:init && npm install --production && npm run build:zip && npm run build:dist"
   },
   "dependencies": {
     "aws-sdk": "^2.1529.0",
