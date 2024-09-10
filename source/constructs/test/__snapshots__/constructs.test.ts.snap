@@ -79,7 +79,7 @@ exports[`Serverless Image Handler Stack Snapshot 1`] = `
   "Mappings": {
     "Solution": {
       "Config": {
-        "AnonymousUsage": "Yes",
+        "AnonymousUsage": "No",
         "SolutionId": "S0ABC",
         "Version": "v6.3.0",
       },
