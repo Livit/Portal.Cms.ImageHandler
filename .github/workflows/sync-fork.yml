@@ -1,0 +1,52 @@
+name: Sync Fork
+
+on:
+  schedule:
+    - cron: '0 0 1-7,15-21 * 1'
+  workflow_dispatch:
+
+jobs:
+  sync-fork:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Fork Repository
+      uses: actions/checkout@v4
+      with:
+        ref: main
+        fetch-depth: 0
+
+    - name: Set up Git credentials
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        git config --global user.name "GitHub Actions Bot"
+        git config --global user.email "devops+actions@labster.com"
+
+    - name: Add Upstream Repository
+      run: |
+        git remote add upstream https://github.com/aws-solutions/serverless-image-handler.git
+        git fetch upstream
+
+    - name: Get Latest Tag from Upstream
+      run: |
+        latest_tag=$(git describe --tags $(git rev-list --tags --max-count=1))
+        echo "Latest tag from upstream is $latest_tag"
+        echo "TAG=$latest_tag" >> $GITHUB_ENV
+
+    - name: Create Sync Branch
+      run: |
+        git checkout -b chore/sync-fork
+        if ! git merge upstream/main; then
+          echo "Merge conflicts detected. Creating PR for manual resolution."
+        fi
+
+    - name: Push Sync Branch to Origin
+      run: |
+        git push origin chore/sync-fork --force
+
+    - name: Create Pull Request
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh pr create --base master --head chore/sync-fork --title "Sync From Upstream ${{ env.TAG }}" --body "This PR syncs updates from the upstream repository at tag ${{ env.TAG }}. Please resolve conflicts if any."
