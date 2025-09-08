@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import S3 from "aws-sdk/clients/s3";
+import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { createHmac } from "crypto";
 
 import {
@@ -15,10 +15,16 @@ import {
   ImageRequestInfo,
   RequestTypes,
   StatusCodes,
+  HEADER_DENY_LIST,
 } from "./lib";
 import { SecretProvider } from "./secret-provider";
 import { ThumborMapper } from "./thumbor-mapper";
-import { SemanticMapper } from "./semantic-mapper";
+import dayjs from "dayjs";
+import customParseFormat from "dayjs/plugin/customParseFormat";
+import utc from "dayjs/plugin/utc";
+import { QueryParamMapper } from "./query-param-mapper";
+dayjs.extend(customParseFormat);
+dayjs.extend(utc);
 
 type OriginalImageInfo = Partial<{
   contentType: string;
@@ -31,7 +37,7 @@ type OriginalImageInfo = Partial<{
 export class ImageRequest {
   private static readonly DEFAULT_EFFORT = 4;
 
-  constructor(private readonly s3Client: S3, private readonly secretProvider: SecretProvider) {}
+  constructor(private readonly s3Client: S3Client, private readonly secretProvider: SecretProvider) {}
 
   /**
    * Determines the output format of an image
@@ -98,13 +104,16 @@ export class ImageRequest {
   public async setup(event: ImageHandlerEvent): Promise<ImageRequestInfo> {
     try {
       await this.validateRequestSignature(event);
+      const secondsToExpiry = this.validateRequestExpires(event);
 
       let imageRequestInfo: ImageRequestInfo = <ImageRequestInfo>{};
+      imageRequestInfo.secondsToExpiry = secondsToExpiry;
 
       imageRequestInfo.requestType = this.parseRequestType(event);
       imageRequestInfo.bucket = this.parseImageBucket(event, imageRequestInfo.requestType);
       imageRequestInfo.key = this.parseImageKey(event, imageRequestInfo.requestType, imageRequestInfo.bucket);
       imageRequestInfo.edits = this.parseImageEdits(event, imageRequestInfo.requestType);
+      imageRequestInfo.edits = this.parseQueryParamEdits(event, imageRequestInfo.edits);
 
       const originalImage = await this.getOriginalImage(imageRequestInfo.bucket, imageRequestInfo.key);
       imageRequestInfo = { ...imageRequestInfo, ...originalImage };
@@ -159,7 +168,7 @@ export class ImageRequest {
       let originalImage;
       try {
         console.info("Getting image from S3:", imageLocation);
-        originalImage = await this.s3Client.getObject(imageLocation).promise();
+        originalImage = await this.s3Client.send(new GetObjectCommand(imageLocation));
       } catch (error) {
         console.error(error);
         throw new ImageHandlerError(
@@ -168,15 +177,12 @@ export class ImageRequest {
           `The image ${key} does not exist or the request may not be base64 encoded properly.`
         );
       }
-      const imageBuffer = Buffer.from(originalImage.Body as Uint8Array);
-
+      const imageBuffer = Buffer.from(await originalImage.Body.transformToByteArray());
+      // Infer from hex headers if provided content type is not supported
       if (originalImage.ContentType) {
-        // If using default S3 ContentType infer from hex headers
-        if (["binary/octet-stream", "application/octet-stream"].includes(originalImage.ContentType)) {
-          result.contentType = this.inferImageType(imageBuffer);
-        } else {
-          result.contentType = originalImage.ContentType;
-        }
+        result.contentType = Object.values(ContentTypes).includes(originalImage.ContentType)
+          ? originalImage.ContentType
+          : this.inferImageType(imageBuffer);
       } else {
         result.contentType = "image";
       }
@@ -195,13 +201,12 @@ export class ImageRequest {
       return result;
     } catch (error) {
       console.error(error);
-      let status = StatusCodes.INTERNAL_SERVER_ERROR;
-      let message = error.message;
-      if (error.code === "NoSuchKey") {
-        status = StatusCodes.NOT_FOUND;
-        message = `The image ${key} does not exist or the request may not be base64 encoded properly.`;
-      }
-      throw new ImageHandlerError(status, error.code, message);
+      if (error instanceof ImageHandlerError) throw error;
+      throw new ImageHandlerError(
+        StatusCodes.INTERNAL_SERVER_ERROR,
+        "ImageRetrieval::CannotRetrieveImage",
+        "Image could not be retrieved from S3."
+      );
     }
   }
 
@@ -218,7 +223,7 @@ export class ImageRequest {
 
       if (request.bucket !== undefined) {
         // Check the provided bucket against the allowed list
-        const sourceBuckets = this.getAllowedSourceBuckets();
+        const sourceBuckets = getAllowedSourceBuckets();
 
         if (sourceBuckets.includes(request.bucket)) {
           return request.bucket;
@@ -231,16 +236,12 @@ export class ImageRequest {
         }
       } else {
         // Try to use the default image source bucket env var
-        const sourceBuckets = this.getAllowedSourceBuckets();
+        const sourceBuckets = getAllowedSourceBuckets();
         return sourceBuckets[0];
       }
-    } else if (
-      requestType === RequestTypes.THUMBOR ||
-      requestType === RequestTypes.CUSTOM ||
-      requestType === RequestTypes.SEMANTIC
-    ) {
+    } else if (requestType === RequestTypes.THUMBOR || requestType === RequestTypes.CUSTOM) {
       // Use the default image source bucket env var
-      const sourceBuckets = this.getAllowedSourceBuckets();
+      const sourceBuckets = getAllowedSourceBuckets();
       // Take the path and split it at "/" to get each "word" in the url as array
       let potentialBucket = event.path
         .split("/")
@@ -270,34 +271,48 @@ export class ImageRequest {
    * @returns The edits to be made to the original image.
    */
   public parseImageEdits(event: ImageHandlerEvent, requestType: RequestTypes): ImageEdits {
-    switch (requestType) {
-      case RequestTypes.DEFAULT:
-        const decoded = this.decodeRequest(event);
-        return decoded.edits;
-      case RequestTypes.THUMBOR:
-        const thumborMapping = new ThumborMapper();
-        return thumborMapping.mapPathToEdits(event.path);
-      case RequestTypes.SEMANTIC:
-        const semanticMapping = new SemanticMapper();
-        return semanticMapping.mapPathToEdits(event);
-      case RequestTypes.CUSTOM:
-        const customMapping = new ThumborMapper();
-        const parsedPath = customMapping.parseCustomPath(event.path);
-        return customMapping.mapPathToEdits(parsedPath);
-      default:
-        throw new ImageHandlerError(
-          StatusCodes.BAD_REQUEST,
-          "ImageEdits::CannotParseEdits",
-          "The edits you provided could not be parsed. Please check the syntax of your request and refer to the documentation for additional guidance."
-        );
+    if (requestType === RequestTypes.DEFAULT) {
+      const decoded = this.decodeRequest(event);
+      return decoded.edits;
+    } else if (requestType === RequestTypes.THUMBOR) {
+      const thumborMapping = new ThumborMapper();
+      return thumborMapping.mapPathToEdits(event.path);
+    } else if (requestType === RequestTypes.CUSTOM) {
+      const thumborMapping = new ThumborMapper();
+      const parsedPath = thumborMapping.parseCustomPath(event.path);
+      return thumborMapping.mapPathToEdits(parsedPath);
+    } else {
+      throw new ImageHandlerError(
+        StatusCodes.BAD_REQUEST,
+        "ImageEdits::CannotParseEdits",
+        "The edits you provided could not be parsed. Please check the syntax of your request and refer to the documentation for additional guidance."
+      );
     }
+  }
+
+  /**
+   * Parses query parameters to generate image edits
+   * @param event - Lambda event containing query parameters
+   * @param edits - Existing image edits to merge with
+   * @returns Combined image edits
+   */
+  public parseQueryParamEdits(event: ImageHandlerEvent, edits: ImageEdits): ImageEdits {
+    if (event.queryStringParameters) {
+      const queryParamMapping = new QueryParamMapper();
+      const newEdits = queryParamMapping.mapQueryParamsToEdits(event.queryStringParameters);
+      if (Object.keys(newEdits).length > 0) {
+        console.info(`Query param edits: ${JSON.stringify(newEdits)}`);
+        return { ...edits, ...newEdits };
+      }
+    }
+    return edits;
   }
 
   /**
    * Parses the name of the appropriate Amazon S3 key corresponding to the original image.
    * @param event Lambda request body.
    * @param requestType Type of the request.
-   * @param bucket
+   * @param bucket The bucket name if the s3:bucketName tag was provided
    * @returns The name of the appropriate Amazon S3 key.
    */
   public parseImageKey(event: ImageHandlerEvent, requestType: RequestTypes, bucket: string = null): string {
@@ -305,22 +320,6 @@ export class ImageRequest {
       // Decode the image request and return the image key
       const { key } = this.decodeRequest(event);
       return key;
-    }
-
-    if (requestType === RequestTypes.SEMANTIC) {
-      let { path } = event;
-
-      const regex = /^\/(.*?)(\?.*)?$/;
-      const match = path.match(regex);
-
-      if (match) {
-        return decodeURIComponent(match[1]);
-      } else
-        throw new ImageHandlerError(
-          StatusCodes.NOT_FOUND,
-          "ImageEdits::CannotFindImage::SemanticURL",
-          "The image you specified could not be found. Please check your request syntax as well as the bucket you specified to ensure it exists."
-        );
     }
 
     if (requestType === RequestTypes.THUMBOR || requestType === RequestTypes.CUSTOM) {
@@ -374,14 +373,12 @@ export class ImageRequest {
     const matchThumbor1 = /^(\/?)((fit-in)?|(filters:.+\(.?\))?|(unsafe)?)/i;
     const matchThumbor2 = /^((.(?!(\.[^.\\/]+$)))*$)/i; // NOSONAR
     const matchThumbor3 = /.*(\.jpg$|\.jpeg$|.\.png$|\.webp$|\.tiff$|\.tif$|\.svg$|\.gif$|\.avif$)/i; // NOSONAR
-    const { REWRITE_MATCH_PATTERN, REWRITE_SUBSTITUTION, USE_SEMANTIC_URL } = process.env;
+    const { REWRITE_MATCH_PATTERN, REWRITE_SUBSTITUTION } = process.env;
     const definedEnvironmentVariables =
       REWRITE_MATCH_PATTERN !== "" &&
       REWRITE_SUBSTITUTION !== "" &&
       REWRITE_MATCH_PATTERN !== undefined &&
       REWRITE_SUBSTITUTION !== undefined;
-
-    const isSemantic = USE_SEMANTIC_URL === "Yes";
 
     // Check if path is base 64 encoded
     let isBase64Encoded = true;
@@ -395,9 +392,6 @@ export class ImageRequest {
     if (matchDefault.test(path) && isBase64Encoded) {
       // use sharp
       return RequestTypes.DEFAULT;
-    } else if (isSemantic) {
-      // use rewrite function then thumbor mappings
-      return RequestTypes.SEMANTIC;
     } else if (definedEnvironmentVariables) {
       // use rewrite function then thumbor mappings
       return RequestTypes.CUSTOM;
@@ -424,7 +418,7 @@ export class ImageRequest {
     if (requestType === RequestTypes.DEFAULT) {
       const { headers } = this.decodeRequest(event);
       if (headers) {
-        return headers;
+        return filterRestrictedHeaders(headers);
       }
     }
   }
@@ -457,25 +451,6 @@ export class ImageRequest {
         "DecodeRequest::CannotReadPath",
         "The URL path you provided could not be read. Please ensure that it is properly formed according to the solution documentation."
       );
-    }
-  }
-
-  /**
-   * Returns a formatted image source bucket allowed list as specified in the SOURCE_BUCKETS environment variable of the image handler Lambda function.
-   * Provides error handling for missing/invalid values.
-   * @returns A formatted image source bucket.
-   */
-  public getAllowedSourceBuckets(): string[] {
-    const { SOURCE_BUCKETS } = process.env;
-
-    if (SOURCE_BUCKETS === undefined) {
-      throw new ImageHandlerError(
-        StatusCodes.BAD_REQUEST,
-        "GetAllowedSourceBuckets::NoSourceBuckets",
-        "The SOURCE_BUCKETS variable could not be read. Please check that it is not empty and contains at least one source bucket, or multiple buckets separated by commas. Spaces can be provided between commas and bucket names, these will be automatically parsed out when decoding."
-      );
-    } else {
-      return SOURCE_BUCKETS.replace(/\s+/g, "").split(",");
     }
   }
 
@@ -532,6 +507,19 @@ export class ImageRequest {
   }
 
   /**
+   * Creates a query string similar to API Gateway 2.0 payload's $.rawQueryString
+   * @param queryStringParameters Request's query parameters
+   * @returns URL encoded queryString
+   */
+  private recreateQueryString(queryStringParameters: ImageHandlerEvent["queryStringParameters"]): string {
+    return Object.entries(queryStringParameters)
+      .filter(([key]) => key !== "signature")
+      .sort()
+      .map(([key, value]) => [key, value].join("="))
+      .join("&");
+  }
+
+  /**
    * Validates the request's signature.
    * @param event Lambda request body.
    * @returns A promise.
@@ -556,7 +544,9 @@ export class ImageRequest {
         const { signature } = queryStringParameters;
         const secret = JSON.parse(await this.secretProvider.getSecret(SECRETS_MANAGER));
         const key = secret[SECRET_KEY];
-        const hash = createHmac("sha256", key).update(path).digest("hex");
+        const queryString = this.recreateQueryString(queryStringParameters);
+        const stringToSign = queryString !== "" ? [path, queryString].join("?") : path;
+        const hash = createHmac("sha256", key).update(stringToSign).digest("hex");
 
         // Signature should be made with the full path.
         if (signature !== hash) {
@@ -576,4 +566,86 @@ export class ImageRequest {
       }
     }
   }
+
+  private validateRequestExpires(event: ImageHandlerEvent): number | undefined {
+    try {
+      const { queryStringParameters } = event;
+      const expires = queryStringParameters?.expires;
+
+      if (expires === undefined) {
+        return;
+      }
+      const expiry = dayjs.utc(expires, "YYYYMMDDTHHmmss[Z]", true);
+      const now = dayjs.utc();
+
+      if (!expiry.isValid()) {
+        throw new ImageHandlerError(
+          StatusCodes.BAD_REQUEST,
+          "ImageRequestExpiryFormat",
+          "Request has invalid expires value. The expires query param should map to a real date and follow the following format: YYYYMMDDTHHmmssZ (Ex: Jan 2nd, 1970 at 12:03:04PM UTC becomes 19700102T120304Z)."
+        );
+      }
+      if (expiry.isBefore(now)) {
+        throw new ImageHandlerError(StatusCodes.BAD_REQUEST, "ImageRequestExpired", "Request has expired.");
+      }
+      return expiry.diff(now, "seconds");
+    } catch (error) {
+      if (error.code === "ImageRequestExpired") {
+        throw error;
+      }
+      if (error.code === "ImageRequestExpiryFormat") {
+        throw error;
+      }
+      console.error("Error occurred while checking expiry.", error);
+      throw new ImageHandlerError(
+        StatusCodes.INTERNAL_SERVER_ERROR,
+        "ExpiryDateCheckFailure",
+        "Expiry date check failed."
+      );
+    }
+  }
+}
+
+/**
+ * Returns a formatted image source bucket allowed list as specified in the SOURCE_BUCKETS environment variable of the image handler Lambda function.
+ * Provides error handling for missing/invalid values.
+ * @returns A formatted image source bucket.
+ */
+export function getAllowedSourceBuckets(): string[] {
+  const { SOURCE_BUCKETS } = process.env;
+
+  if (SOURCE_BUCKETS === undefined) {
+    throw new ImageHandlerError(
+      StatusCodes.BAD_REQUEST,
+      "GetAllowedSourceBuckets::NoSourceBuckets",
+      "The SOURCE_BUCKETS variable could not be read. Please check that it is not empty and contains at least one source bucket, or multiple buckets separated by commas. Spaces can be provided between commas and bucket names, these will be automatically parsed out when decoding."
+    );
+  } else {
+    return SOURCE_BUCKETS.replace(/\s+/g, "").split(",");
+  }
+}
+
+/**
+ * Filters out headers that match any pattern in the deny list and returns the safe headers
+ * @param headers Input headers to filter
+ * @returns Safe headers
+ */
+function filterRestrictedHeaders(headers: Record<string, string>): Headers {
+  const safeHeaders: Record<string, string> = {};
+
+  // Process each header using for...of loop
+  for (const [header, value] of Object.entries(headers)) {
+    const headerLower = header.toLowerCase();
+
+    // If the header matches any pattern in the deny list, log and skip
+    if (HEADER_DENY_LIST.some((pattern) => pattern.test(headerLower))) {
+      console.warn("Filtered out restricted header:", header);
+      continue;
+    }
+
+    // Add safe headers
+    safeHeaders[header] = value;
+  }
+
+  return safeHeaders;
 }

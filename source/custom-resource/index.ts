@@ -1,9 +1,29 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import EC2, { DescribeRegionsRequest } from "aws-sdk/clients/ec2";
-import S3, { CreateBucketRequest, PutBucketEncryptionRequest, PutBucketPolicyRequest } from "aws-sdk/clients/s3";
-import SecretsManager from "aws-sdk/clients/secretsmanager";
+import { CloudFormationClient, DescribeStackResourcesCommand } from "@aws-sdk/client-cloudformation";
+import { EC2Client, DescribeRegionsCommand, DescribeRegionsCommandInput } from "@aws-sdk/client-ec2";
+import { ServiceCatalogAppRegistryClient, GetApplicationCommand } from "@aws-sdk/client-service-catalog-appregistry";
+import {
+  S3Client,
+  HeadBucketCommand,
+  HeadObjectCommand,
+  PutObjectCommand,
+  CreateBucketCommand,
+  PutBucketEncryptionCommand,
+  PutBucketPolicyCommand,
+  PutBucketTaggingCommand,
+  PutBucketVersioningCommand,
+  GetBucketLocationCommand,
+  PutBucketPolicyCommandInput,
+  PutBucketTaggingCommandInput,
+  PutBucketEncryptionCommandInput,
+  PutBucketVersioningCommandInput,
+  CreateBucketCommandInput,
+  PutObjectCommandInput,
+} from "@aws-sdk/client-s3";
+import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
+import { CloudFrontClient, GetDistributionCommand } from "@aws-sdk/client-cloudfront";
 import axios, { RawAxiosRequestConfig, AxiosResponse } from "axios";
 import { createHash } from "crypto";
 import moment from "moment";
@@ -28,12 +48,17 @@ import {
   ResourcePropertyTypes,
   SendMetricsRequestProperties,
   StatusTypes,
+  CheckFirstBucketRegionRequestProperties,
+  GetAppRegApplicationNameRequestProperties,
+  ValidateExistingDistributionRequestProperties,
 } from "./lib";
-
 const awsSdkOptions = getOptions();
-const s3Client = new S3(awsSdkOptions);
-const ec2Client = new EC2(awsSdkOptions);
-const secretsManager = new SecretsManager(awsSdkOptions);
+const s3Client = new S3Client({ ...awsSdkOptions, followRegionRedirects: true });
+const ec2Client = new EC2Client(awsSdkOptions);
+const cloudformationClient = new CloudFormationClient(awsSdkOptions);
+const serviceCatalogClient = new ServiceCatalogAppRegistryClient(awsSdkOptions);
+const secretsManager = new SecretsManagerClient(awsSdkOptions);
+const cloudfrontClient = new CloudFrontClient(awsSdkOptions);
 
 const { SOLUTION_ID, SOLUTION_VERSION, AWS_REGION, RETRY_SECONDS } = process.env;
 const METRICS_ENDPOINT = "https://metrics.awssolutionsbuilder.com/generic";
@@ -46,8 +71,8 @@ const RETRY_COUNT = 3;
  * @returns Processed request response.
  */
 export async function handler(event: CustomResourceRequest, context: LambdaContext) {
-  console.info("Received event:", JSON.stringify(event, null, 2));
-
+  console.info(`Received event: ${event.RequestType}::${event.ResourceProperties.CustomAction}`);
+  console.info(`Resource properties: ${JSON.stringify(event.ResourceProperties)}`);
   const { RequestType, ResourceProperties } = event;
   const response: CompletionStatus = {
     Status: StatusTypes.SUCCESS,
@@ -90,6 +115,29 @@ export async function handler(event: CustomResourceRequest, context: LambdaConte
         );
         break;
       }
+      case CustomResourceActions.CHECK_FIRST_BUCKET_REGION: {
+        const allowedRequestTypes = [CustomResourceRequestTypes.CREATE, CustomResourceRequestTypes.UPDATE];
+        await performRequest(checkFirstBucketRegion, RequestType, allowedRequestTypes, response, {
+          ...ResourceProperties,
+          StackId: event.StackId,
+        } as CheckFirstBucketRegionRequestProperties);
+        break;
+      }
+      case CustomResourceActions.GET_APP_REG_APPLICATION_NAME: {
+        const allowedRequestTypes = [CustomResourceRequestTypes.CREATE, CustomResourceRequestTypes.UPDATE];
+        await performRequest(getAppRegApplicationName, RequestType, allowedRequestTypes, response, {
+          ...ResourceProperties,
+          StackId: event.StackId,
+        } as GetAppRegApplicationNameRequestProperties);
+        break;
+      }
+      case CustomResourceActions.VALIDATE_EXISTING_DISTRIBUTION: {
+        const allowedRequestTypes = [CustomResourceRequestTypes.CREATE, CustomResourceRequestTypes.UPDATE];
+        await performRequest(validateExistingDistribution, RequestType, allowedRequestTypes, response, {
+          ...ResourceProperties,
+        } as ValidateExistingDistributionRequestProperties);
+        break;
+      }
       case CustomResourceActions.CHECK_SECRETS_MANAGER: {
         const allowedRequestTypes = [CustomResourceRequestTypes.CREATE, CustomResourceRequestTypes.UPDATE];
         await performRequest(
@@ -114,13 +162,10 @@ export async function handler(event: CustomResourceRequest, context: LambdaConte
       }
       case CustomResourceActions.CREATE_LOGGING_BUCKET: {
         const allowedRequestTypes = [CustomResourceRequestTypes.CREATE];
-        await performRequest(
-          createCloudFrontLoggingBucket,
-          RequestType,
-          allowedRequestTypes,
-          response,
-          { ...ResourceProperties, StackId: event.StackId } as CreateLoggingBucketRequestProperties
-        );
+        await performRequest(createCloudFrontLoggingBucket, RequestType, allowedRequestTypes, response, {
+          ...ResourceProperties,
+          StackId: event.StackId,
+        } as CreateLoggingBucketRequestProperties);
         break;
       }
       default:
@@ -273,6 +318,9 @@ async function sendAnonymousMetric(
         AutoWebP: requestProperties.AutoWebP,
         EnableSignature: requestProperties.EnableSignature,
         EnableDefaultFallbackImage: requestProperties.EnableDefaultFallbackImage,
+        EnableS3ObjectLambda: requestProperties.EnableS3ObjectLambda,
+        OriginShieldRegion: requestProperties.OriginShieldRegion,
+        UseExistingCloudFrontDistribution: requestProperties.UseExistingCloudFrontDistribution,
       },
     };
 
@@ -322,7 +370,7 @@ async function putConfigFile(
   const content = `'use strict';\n\nconst appVariables = {\n${configFieldValues}\n};`;
 
   // In case getting object fails due to asynchronous IAM permission creation, it retries.
-  const params = {
+  const params: PutObjectCommandInput = {
     Bucket: DestS3Bucket,
     Body: content,
     Key: DestS3key,
@@ -333,7 +381,7 @@ async function putConfigFile(
     try {
       console.info(`Putting ${DestS3key}... Try count: ${retry}`);
 
-      await s3Client.putObject(params).promise();
+      await s3Client.send(new PutObjectCommand(params));
 
       console.info(`Putting ${DestS3key} completed.`);
       break;
@@ -380,9 +428,8 @@ async function validateBuckets(requestProperties: CheckSourceBucketsRequestPrope
   const errorBuckets = [];
 
   for (const bucket of checkBuckets) {
-    const params = { Bucket: bucket };
     try {
-      await s3Client.headBucket(params).promise();
+      await s3Client.send(new HeadBucketCommand({ Bucket: bucket }));
 
       console.info(`Found bucket: ${bucket}`);
     } catch (error) {
@@ -401,6 +448,135 @@ async function validateBuckets(requestProperties: CheckSourceBucketsRequestPrope
       "BucketNotFound",
       `Could not find the following source bucket(s) in your account: ${commaSeparatedErrors}. Please specify at least one source bucket that exists within your account and try again. If specifying multiple source buckets, please ensure that they are comma-separated.`
     );
+  }
+}
+
+/**
+ * Validates if the first bucket is located in the same region as the deployment.
+ * @param requestProperties The request properties.
+ * @returns The result of validation.
+ */
+async function checkFirstBucketRegion(
+  requestProperties: CheckFirstBucketRegionRequestProperties
+): Promise<{ BucketName: string; BucketHash: string }> {
+  const { SourceBuckets } = requestProperties;
+  const bucket = SourceBuckets.replace(/\s/g, "");
+  const dummyBucketName = `sih-dummy-${requestProperties.UUID}`;
+
+  if (requestProperties.S3ObjectLambda !== "Yes") {
+    console.info("Detected non-S3 Object Lambda deployment. Returning first bucket.");
+    return { BucketName: bucket, BucketHash: "" };
+  }
+  // Generate unique bucket hash to support unique Access Point names
+  const generateBucketHash = (bucketName: string): string => {
+    // Simple hashing algorithm
+    let hash = 0;
+    for (let i = 0; i < bucketName.length; i++) {
+      hash = (hash << 5) - hash + bucketName.charCodeAt(i);
+      hash |= 0; // Convert to 32bit integer
+    }
+    return Math.abs(hash).toString(36).slice(0, 6).toLowerCase();
+  };
+  console.info("Detected S3 Object Lambda deployment.");
+  console.info(`Attempting to check if the following bucket exists in the same region as deployment: ${bucket}`);
+
+  try {
+    const bucketLocationResponse = await s3Client.send(new GetBucketLocationCommand({ Bucket: bucket }));
+    const bucketRegion = bucketLocationResponse.LocationConstraint || "us-east-1";
+    if (bucketRegion === AWS_REGION) {
+      console.info(`Bucket '${bucket}' is in the same region (${bucketRegion}) as the S3 client.`);
+      return { BucketName: bucket, BucketHash: generateBucketHash(bucket) };
+    } else {
+      try {
+        await s3Client.send(new HeadBucketCommand({ Bucket: dummyBucketName }));
+
+        console.info(`Found bucket: ${dummyBucketName}`);
+        return { BucketName: dummyBucketName, BucketHash: generateBucketHash(dummyBucketName) };
+      } catch (error) {
+        console.info(`Could not find dummy bucket. Creating bucket in region: ${AWS_REGION}`);
+        await s3Client.send(new CreateBucketCommand({ Bucket: dummyBucketName }));
+        try {
+          console.info("Adding tag...");
+
+          const taggingParams: PutBucketTaggingCommandInput = {
+            Bucket: dummyBucketName,
+            Tagging: {
+              TagSet: [
+                {
+                  Key: "stack-id",
+                  Value: requestProperties.StackId,
+                },
+              ],
+            },
+          };
+          await s3Client.send(new PutBucketTaggingCommand(taggingParams));
+
+          console.info(`Successfully added tag to bucket '${dummyBucketName}'`);
+        } catch (error) {
+          console.error(`Failed to add tag to bucket '${dummyBucketName}'`);
+          console.error(error);
+          // Continue, failure here shouldn't block
+        }
+        return { BucketName: dummyBucketName, BucketHash: generateBucketHash(dummyBucketName) };
+      }
+    }
+  } catch (error) {
+    console.error(error);
+    throw new CustomResourceError("BucketNotFound", `Could not validate the existence of a bucket in ${AWS_REGION}.`);
+  }
+}
+
+/**
+ * Provides the existing app registry application name if it exists, otherwise, returns the default.
+ * @param requestProperties The request properties.
+ * @returns The application name to use.
+ */
+async function getAppRegApplicationName(
+  requestProperties: GetAppRegApplicationNameRequestProperties
+): Promise<{ ApplicationName?: string }> {
+  try {
+    const stackResources = await cloudformationClient.send(
+      new DescribeStackResourcesCommand({
+        StackName: requestProperties.StackId,
+        LogicalResourceId: "AppRegistry968496A3",
+      })
+    );
+
+    const application = await serviceCatalogClient.send(
+      new GetApplicationCommand({
+        application: stackResources.StackResources[0].PhysicalResourceId,
+      })
+    );
+    return {
+      ApplicationName: application?.name ?? requestProperties.DefaultName,
+    };
+  } catch (error) {
+    console.error(error);
+    return {
+      ApplicationName: requestProperties.DefaultName,
+    };
+  }
+}
+
+/**
+ * Validates the existences of the CloudFront distribution provided. Retrieves the domain name.
+ * @param requestProperties The request properties.
+ * @returns The domain name of the existing distribution.
+ */
+async function validateExistingDistribution(
+  requestProperties: ValidateExistingDistributionRequestProperties
+): Promise<{ DistributionDomainName?: string }> {
+  try {
+    const response = await cloudfrontClient.send(
+      new GetDistributionCommand({
+        Id: requestProperties.ExistingDistributionID,
+      })
+    );
+
+    return { DistributionDomainName: response.Distribution?.DomainName };
+  } catch (error) {
+    console.error("Error validating distribution:", error);
+    throw error;
   }
 }
 
@@ -426,7 +602,7 @@ async function checkSecretsManager(
 
   for (let retry = 1; retry <= RETRY_COUNT; retry++) {
     try {
-      const response = await secretsManager.getSecretValue({ SecretId: SecretsManagerName }).promise();
+      const response = await secretsManager.send(new GetSecretValueCommand({ SecretId: SecretsManagerName }));
       const secretString = JSON.parse(response.SecretString);
 
       if (!Object.prototype.hasOwnProperty.call(secretString, SecretsManagerKey)) {
@@ -481,7 +657,7 @@ async function checkFallbackImage(
 
   for (let retry = 1; retry <= RETRY_COUNT; retry++) {
     try {
-      data = await s3Client.headObject({ Bucket: FallbackImageS3Bucket, Key: FallbackImageS3Key }).promise();
+      data = await s3Client.send(new HeadObjectCommand({ Bucket: FallbackImageS3Bucket, Key: FallbackImageS3Key }));
       break;
     } catch (error) {
       if (retry === RETRY_COUNT || ![ErrorCodes.ACCESS_DENIED, ErrorCodes.FORBIDDEN].includes(error.code)) {
@@ -526,24 +702,30 @@ async function createCloudFrontLoggingBucket(requestProperties: CreateLoggingBuc
     `The opt-in status of the '${AWS_REGION}' region is '${isOptInRegion ? "opted-in" : "opt-in-not-required"}'`
   );
 
+  const regionS3Client = new S3Client({
+    ...awsSdkOptions,
+    region: targetRegion,
+  });
+
   // create bucket
   try {
-    const s3Client = new S3({
-      ...awsSdkOptions,
-      apiVersion: "2006-03-01",
-      region: targetRegion,
-    });
-
-    const createBucketRequestParams: CreateBucketRequest = {
+    const createBucketRequestParams: CreateBucketCommandInput = {
       Bucket: bucketName,
-      ACL: "log-delivery-write",
-      ObjectOwnership: "ObjectWriter",
+      ACL: "log-delivery-write" as never, // Type assertion to suppress ACL and ownership, no type-def available for the needed values
+      ObjectOwnership: "ObjectWriter" as never,
     };
-    await s3Client.createBucket(createBucketRequestParams).promise();
+    await regionS3Client.send(new CreateBucketCommand(createBucketRequestParams));
 
     console.info(`Successfully created bucket '${bucketName}' in '${targetRegion}' region`);
+
+    const putBucketVersioningRequestParams: PutBucketVersioningCommandInput = {
+      Bucket: bucketName,
+      VersioningConfiguration: { Status: "Enabled" },
+    };
+    await regionS3Client.send(new PutBucketVersioningCommand(putBucketVersioningRequestParams));
+    console.info(`Successfully enabled versioning on '${bucketName}'`);
   } catch (error) {
-    console.error(`Could not create bucket '${bucketName}'`);
+    console.error(`Could not create bucket '${bucketName}' or failed to enable versioning`);
     console.error(error);
 
     throw error;
@@ -552,14 +734,14 @@ async function createCloudFrontLoggingBucket(requestProperties: CreateLoggingBuc
   // add encryption to bucket
   console.info("Adding Encryption...");
   try {
-    const putBucketEncryptionRequestParams: PutBucketEncryptionRequest = {
+    const putBucketEncryptionRequestParams: PutBucketEncryptionCommandInput = {
       Bucket: bucketName,
       ServerSideEncryptionConfiguration: {
         Rules: [{ ApplyServerSideEncryptionByDefault: { SSEAlgorithm: "AES256" } }],
       },
     };
 
-    await s3Client.putBucketEncryption(putBucketEncryptionRequestParams).promise();
+    await regionS3Client.send(new PutBucketEncryptionCommand(putBucketEncryptionRequestParams));
 
     console.info(`Successfully enabled encryption on bucket '${bucketName}'`);
   } catch (error) {
@@ -572,7 +754,6 @@ async function createCloudFrontLoggingBucket(requestProperties: CreateLoggingBuc
   // add policy to bucket
   try {
     console.info("Adding policy...");
-
     const bucketPolicyStatement = {
       Resource: `arn:aws:s3:::${bucketName}/*`,
       Action: "*",
@@ -585,12 +766,12 @@ async function createCloudFrontLoggingBucket(requestProperties: CreateLoggingBuc
       Version: "2012-10-17",
       Statement: [bucketPolicyStatement],
     };
-    const putBucketPolicyRequestParams: PutBucketPolicyRequest = {
+    const putBucketPolicyRequestParams: PutBucketPolicyCommandInput = {
       Bucket: bucketName,
       Policy: JSON.stringify(bucketPolicy),
     };
 
-    await s3Client.putBucketPolicy(putBucketPolicyRequestParams).promise();
+    await regionS3Client.send(new PutBucketPolicyCommand(putBucketPolicyRequestParams));
 
     console.info(`Successfully added policy to bucket '${bucketName}'`);
   } catch (error) {
@@ -603,18 +784,18 @@ async function createCloudFrontLoggingBucket(requestProperties: CreateLoggingBuc
   // Add Stack tag
   try {
     console.info("Adding tag...");
-
-    const taggingParams = {
+    const taggingParams: PutBucketTaggingCommandInput = {
       Bucket: bucketName,
       Tagging: {
         TagSet: [
           {
             Key: "stack-id",
-            Value: requestProperties.StackId
-          }]
-      }
+            Value: requestProperties.StackId,
+          },
+        ],
+      },
     };
-    await s3Client.putBucketTagging(taggingParams).promise();
+    await regionS3Client.send(new PutBucketTaggingCommand(taggingParams));
 
     console.info(`Successfully added tag to bucket '${bucketName}'`);
   } catch (error) {
@@ -632,11 +813,11 @@ async function createCloudFrontLoggingBucket(requestProperties: CreateLoggingBuc
  * @returns The result of check.
  */
 async function checkRegionOptInStatus(region: string): Promise<boolean> {
-  const describeRegionsRequestParams: DescribeRegionsRequest = {
+  const describeRegionsRequestParams: DescribeRegionsCommandInput = {
     RegionNames: [region],
     Filters: [{ Name: "opt-in-status", Values: ["opted-in"] }],
   };
-  const describeRegionsResponse = await ec2Client.describeRegions(describeRegionsRequestParams).promise();
+  const describeRegionsResponse = await ec2Client.send(new DescribeRegionsCommand(describeRegionsRequestParams));
 
   return describeRegionsResponse.Regions.length > 0;
 }

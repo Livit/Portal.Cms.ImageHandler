@@ -1,6 +1,6 @@
 {
   "name": "source",
-  "version": "6.3.0",
+  "version": "7.0.6",
   "private": true,
   "description": "ESLint and prettier dependencies to be used within the solution",
   "license": "Apache-2.0",
@@ -9,7 +9,7 @@
     "url": "https://aws.amazon.com/solutions"
   },
   "scripts": {
-    "lint": "npx eslint . --ext .ts",
+    "lint": "npx eslint . --ext .ts --fix",
     "prettier-format": "npx prettier --config .prettierrc.yml '**/*.ts' --write",
     "install:custom-resource": "cd ./custom-resource && npm run clean && npm ci",
     "install:image-handler": "cd ./image-handler && npm run clean && npm ci",
@@ -17,7 +17,7 @@
     "install:metrics-utils": "cd ./metrics-utils && npm ci",
     "install:dependencies": "npm run install:metrics-utils && npm run install:custom-resource && npm run install:image-handler && npm run install:demo-ui",
     "bump-version": "npm version $(cat ../VERSION.txt) --allow-same-version && npm run bump-child-version",
-    "bump-child-version": " npm --prefix ./image-handler run bump-version && npm --prefix ./custom-resource run bump-version && npm --prefix ./constructs run bump-version && npm --prefix ./solution-utils run bump-version && npm --prefix ./demo-ui run bump-version"
+    "bump-child-version": " npm --prefix ./image-handler run bump-version && npm --prefix ./custom-resource run bump-version && npm --prefix ./constructs run bump-version && npm --prefix ./solution-utils run bump-version && npm --prefix ./demo-ui run bump-version && npm --prefix ./metrics-utils run bump-version"
   },
   "devDependencies": {
     "@types/node": "^20.10.4",
@@ -32,13 +32,5 @@
     "eslint-plugin-node": "^11.1.0",
     "eslint-plugin-prettier": "^4.2.1",
     "prettier": "~2.8.8"
-  },
-  "overrides": {
-    "semver": "7.5.4",
-    "word-wrap": "npm:@aashutoshrathi/word-wrap"
-  },
-  "resolutions": {
-    "semver": "7.5.4",
-    "word-wrap": "aashutoshrathi/word-wrap"
   }
 }

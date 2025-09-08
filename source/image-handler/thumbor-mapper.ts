@@ -343,7 +343,9 @@ export class ThumborMapper {
         break;
       }
       case "rotate": {
-        currentEdits.rotate = Number(filterValue);
+        // When filterValue is empty, set rotate to undefined to trigger autoOrient()
+        // This aligns with Sharp's behavior where rotate() without parameters calls autoOrient()
+        currentEdits.rotate = filterValue === "" ? undefined : Number(filterValue);
         break;
       }
       case "sharpen": {
@@ -370,7 +372,15 @@ export class ThumborMapper {
         break;
       }
       case "animated": {
-        currentEdits.animated = filterValue.toLowerCase() != "false";
+        currentEdits.animated = filterValue.toLowerCase() !== "false";
+        break;
+      }
+      case "smart_crop": {
+        const [faceIndex, padding] = filterValue.split(",");
+        currentEdits.smartCrop = {
+          faceIndex: faceIndex ? parseInt(faceIndex) : undefined,
+          padding: padding ? parseInt(padding) : undefined,
+        };
         break;
       }
     }

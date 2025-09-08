@@ -1,16 +1,16 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import S3 from "aws-sdk/clients/s3";
-import SecretsManager from "aws-sdk/clients/secretsmanager";
+import { S3Client } from "@aws-sdk/client-s3";
+import { SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 
 import { ImageRequest } from "../../image-request";
 import { RequestTypes, StatusCodes } from "../../lib";
 import { SecretProvider } from "../../secret-provider";
 
 describe("parseImageBucket", () => {
-  const s3Client = new S3();
-  const secretsManager = new SecretsManager();
+  const s3Client = new S3Client();
+  const secretsManager = new SecretsManagerClient();
   const secretProvider = new SecretProvider(secretsManager);
   const OLD_ENV = process.env;
 
@@ -137,8 +137,8 @@ describe("parseImageBucket", () => {
 
     const bucket = imageRequest.parseImageBucket(event, RequestTypes.THUMBOR);
     // Assert
-    expect(bucket).toEqual("allowedBucket001")
-  })
+    expect(bucket).toEqual("allowedBucket001");
+  });
 
   it("should parse bucket-name from any section in the url", () => {
     // Arrange
@@ -150,8 +150,8 @@ describe("parseImageBucket", () => {
 
     const bucket = imageRequest.parseImageBucket(event, RequestTypes.THUMBOR);
     // Assert
-    expect(bucket).toEqual("test-bucket")
-  })
+    expect(bucket).toEqual("test-bucket");
+  });
 
   it("should only parse bucket-names in source_buckets", () => {
     // Arrange
@@ -163,8 +163,8 @@ describe("parseImageBucket", () => {
 
     const bucket = imageRequest.parseImageBucket(event, RequestTypes.THUMBOR);
     // Assert
-    expect(bucket).toEqual("test-bucket")
-  })
+    expect(bucket).toEqual("test-bucket");
+  });
 
   it("should parse bucket-name from first part in thumbor request and return it", () => {
     // Arrange
@@ -176,8 +176,8 @@ describe("parseImageBucket", () => {
 
     const bucket = imageRequest.parseImageBucket(event, RequestTypes.THUMBOR);
     // Assert
-    expect(bucket).toEqual("test-bucket")
-  })
+    expect(bucket).toEqual("test-bucket");
+  });
 
   it("should take bucket-name from env-variable if not present in the URL", () => {
     // Arrange
@@ -189,6 +189,32 @@ describe("parseImageBucket", () => {
 
     const bucket = imageRequest.parseImageBucket(event, RequestTypes.THUMBOR);
     // Assert
-    expect(bucket).toEqual("allowedBucket001")
-  })
+    expect(bucket).toEqual("allowedBucket001");
+  });
+
+  it("should parse bucket-name from first part in thumbor request and return it when using legacy multiple filters", () => {
+    // Arrange
+    const event = { path: "/filters:grayscale()/filters:rotate(180)/s3:test-bucket/test-image-001.jpg" };
+    process.env.SOURCE_BUCKETS = "allowedBucket001, test-bucket";
+
+    // Act
+    const imageRequest = new ImageRequest(s3Client, secretProvider);
+
+    const bucket = imageRequest.parseImageBucket(event, RequestTypes.THUMBOR);
+    // Assert
+    expect(bucket).toEqual("test-bucket");
+  });
+
+  it("should parse bucket-name from first part in thumbor request and return it when chaining multiple filters", () => {
+    // Arrange
+    const event = { path: "/filters:grayscale():rotate(180)/s3:test-bucket/test-image-001.jpg" };
+    process.env.SOURCE_BUCKETS = "allowedBucket001, test-bucket";
+
+    // Act
+    const imageRequest = new ImageRequest(s3Client, secretProvider);
+
+    const bucket = imageRequest.parseImageBucket(event, RequestTypes.THUMBOR);
+    // Assert
+    expect(bucket).toEqual("test-bucket");
+  });
 });

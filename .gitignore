@@ -23,8 +23,12 @@
 **/testem.log
 **/.vscode/settings.json
 demo-ui-config.js
+.temp_redpencil
+bom.json
 
 # System Files
 **/.DS_Store
 **/.vscode
 **/.idea
+build
+dist
