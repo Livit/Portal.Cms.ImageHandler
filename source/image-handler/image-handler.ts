@@ -28,6 +28,8 @@ import { getAllowedSourceBuckets } from "./image-request";
 import { SHARP_EDIT_ALLOWLIST_ARRAY } from "./lib/constants";
 
 export class ImageHandler {
+  private readonly LAMBDA_PAYLOAD_LIMIT = 10 * 1024 * 1024;
+
   constructor(private readonly s3Client: S3Client, private readonly rekognitionClient: RekognitionClient) {}
 
   /**
