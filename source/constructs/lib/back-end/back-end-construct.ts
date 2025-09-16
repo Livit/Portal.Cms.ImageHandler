@@ -120,6 +120,7 @@ export class BackEnd extends Construct {
         SOLUTION_VERSION: props.solutionVersion,
         SOLUTION_ID: props.solutionId,
         SHARP_SIZE_LIMIT: props.sharpSizeLimit,
+        USE_SEMANTIC_URL: props.useSemanticUrl,
       },
       bundling: {
         externalModules: ["sharp"],

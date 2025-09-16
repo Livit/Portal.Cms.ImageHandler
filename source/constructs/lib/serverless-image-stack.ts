@@ -188,6 +188,13 @@ export class ServerlessImageHandlerStack extends Stack {
       allowedPattern: "^$|^E[A-Z0-9]{8,}$",
     });
 
+    const useSemanticUrlParameter = new CfnParameter(this, "UseSemanticUrlParameter", {
+      type: "String",
+      description: `Would you like to enable semantic URL mapping for image requests? Select 'Yes' if so.`,
+      allowedValues: ["Yes", "No"],
+      default: "No",
+    });
+
     /* eslint-disable no-new */
     new CfnRule(this, "ExistingDistributionIdRequiredRule", {
       ruleCondition: Fn.conditionEquals(useExistingCloudFrontDistribution.valueAsString, "Yes"),
@@ -239,6 +246,7 @@ export class ServerlessImageHandlerStack extends Stack {
       enableS3ObjectLambda: enableS3ObjectLambdaParameter.valueAsString,
       useExistingCloudFrontDistribution: useExistingCloudFrontDistribution.valueAsString as YesNo,
       existingCloudFrontDistributionId: existingCloudFrontDistributionId.valueAsString,
+      useSemanticUrl: useSemanticUrlParameter.valueAsString as YesNo,
     };
 
     const commonResources = new CommonResources(this, "CommonResources", {

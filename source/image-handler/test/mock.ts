@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Mock AWS SDK v3 S3 client
+export const mockAwsS3 = {
+  send: jest.fn(),
+};
+
 export const mockS3Commands = {
   headObject: jest.fn(),
   copyObject: jest.fn(),

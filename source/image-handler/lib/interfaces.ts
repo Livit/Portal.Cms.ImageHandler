@@ -17,11 +17,16 @@ export interface QueryStringParameters {
   flip?: string;
   flop?: string;
   grayscale?: string;
+  w?: string;
+  h?: string;
+  fm?: string;
+  q?: string;
 }
 
 export interface ImageHandlerEvent {
   path?: string;
   queryStringParameters?: QueryStringParameters;
+  multiValueQueryStringParameters?: { [key: string]: string[] };
   requestContext?: {
     elb?: unknown;
   };

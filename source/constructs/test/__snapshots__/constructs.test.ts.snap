@@ -620,6 +620,15 @@ exports[`Dynamic Image Transformation for Amazon CloudFront Stack Snapshot 1`] =
       "Description": "If you would like to use an existing CloudFront distribution, select 'Yes'. Otherwise, select 'No' to create a new CloudFront distribution. This option will require additional manual setup after deployment. Please refer to the implementation guide for details: https://docs.aws.amazon.com/solutions/latest/serverless-image-handler/attaching-existing-distribution.html",
       "Type": "String",
     },
+    "UseSemanticUrlParameter": {
+      "AllowedValues": [
+        "Yes",
+        "No",
+      ],
+      "Default": "No",
+      "Description": "Would you like to enable semantic URL mapping for image requests? Select 'Yes' if so.",
+      "Type": "String",
+    },
   },
   "Resources": {
     "AppRegistry968496A3": {
@@ -1991,6 +2000,9 @@ function processQueryParams(querystring) {
             "SOLUTION_VERSION": "Omitted to remove snapshot dependency on solution version",
             "SOURCE_BUCKETS": {
               "Ref": "SourceBucketsParameter",
+            },
+            "USE_SEMANTIC_URL": {
+              "Ref": "UseSemanticUrlParameter",
             },
           },
         },
