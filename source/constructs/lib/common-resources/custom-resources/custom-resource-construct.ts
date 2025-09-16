@@ -7,7 +7,18 @@ import { Function as LambdaFunction, Runtime } from "aws-cdk-lib/aws-lambda";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { Bucket, IBucket } from "aws-cdk-lib/aws-s3";
 import { BucketDeployment, Source as S3Source } from "aws-cdk-lib/aws-s3-deployment";
-import { ArnFormat, Aspects, Aws, CfnCondition, CfnResource, CustomResource, Duration, Fn, Lazy, Stack } from "aws-cdk-lib";
+import {
+  ArnFormat,
+  Aspects,
+  Aws,
+  CfnCondition,
+  CfnResource,
+  CustomResource,
+  Duration,
+  Fn,
+  Lazy,
+  Stack,
+} from "aws-cdk-lib";
 import { Construct } from "constructs";
 import { addCfnCondition, addCfnSuppressRules } from "../../../utils/utils";
 
@@ -28,6 +39,7 @@ export interface ValidateSourceAndFallbackImageBucketsCustomResourceProps {
   readonly sourceBuckets: string;
   readonly fallbackImageS3Bucket: string;
   readonly fallbackImageS3Key: string;
+  readonly enableS3ObjectLambda: string;
 }
 
 export interface SetupCopyWebsiteCustomResourceProps {
@@ -44,11 +56,20 @@ export interface SetupValidateSecretsManagerProps {
   readonly secretsManagerKey: string;
 }
 
+export interface SetupValidateExistingDistributionProps {
+  readonly existingDistributionId: string;
+  readonly condition: CfnCondition;
+}
+
 export class CustomResourcesConstruct extends Construct {
   private readonly conditions: Conditions;
   private readonly customResourceRole: Role;
   private readonly customResourceLambda: LambdaFunction;
   public readonly uuid: string;
+  public regionedBucketName: string;
+  public regionedBucketHash: string;
+  public appRegApplicationName: string;
+  public existingDistributionDomainName: string;
 
   constructor(scope: Construct, id: string, props: CustomResourcesConstructProps) {
     super(scope, id);
@@ -73,17 +94,17 @@ export class CustomResourcesConstruct extends Construct {
                 }),
               ],
             }),
+          ],
+        }),
+        S3AccessPolicy: new PolicyDocument({
+          statements: [
             new PolicyStatement({
-              actions: ['s3:ListBucket'],
-              resources: this.createSourceBucketsResource()
+              actions: ["s3:ListBucket", "s3:GetBucketLocation"],
+              resources: this.createSourceBucketsResource(),
             }),
             new PolicyStatement({
-              actions: [
-                "s3:GetObject",
-              ],
-              resources: [
-                `arn:aws:s3:::${props.fallbackImageS3Bucket}/${props.fallbackImageS3KeyBucket}`,
-              ],
+              actions: ["s3:GetObject"],
+              resources: [`arn:aws:s3:::${props.fallbackImageS3Bucket}/${props.fallbackImageS3KeyBucket}`],
             }),
             new PolicyStatement({
               actions: [
@@ -92,7 +113,8 @@ export class CustomResourcesConstruct extends Construct {
                 "s3:putBucketPolicy",
                 "s3:CreateBucket",
                 "s3:PutBucketOwnershipControls",
-                "s3:PutBucketTagging"
+                "s3:PutBucketTagging",
+                "s3:PutBucketVersioning",
               ],
               resources: [
                 Stack.of(this).formatArn({
@@ -105,6 +127,10 @@ export class CustomResourcesConstruct extends Construct {
                 }),
               ],
             }),
+            new PolicyStatement({
+              actions: ["s3:ListBucket"],
+              resources: [`arn:aws:s3:::sih-dummy-*`],
+            }),
           ],
         }),
         EC2Policy: new PolicyDocument({
@@ -116,6 +142,58 @@ export class CustomResourcesConstruct extends Construct {
             }),
           ],
         }),
+        AppRegistryPolicy: new PolicyDocument({
+          statements: [
+            new PolicyStatement({
+              effect: Effect.ALLOW,
+              actions: ["cloudformation:DescribeStackResources"],
+              resources: [
+                Stack.of(this).formatArn({
+                  partition: Aws.PARTITION,
+                  service: "cloudformation",
+                  region: Aws.REGION,
+                  account: Aws.ACCOUNT_ID,
+                  resource: "stack",
+                  resourceName: `${Aws.STACK_NAME}/*`,
+                  arnFormat: ArnFormat.SLASH_RESOURCE_NAME,
+                }),
+              ],
+            }),
+            new PolicyStatement({
+              effect: Effect.ALLOW,
+              actions: ["servicecatalog:GetApplication"],
+              resources: [
+                Stack.of(this).formatArn({
+                  partition: Aws.PARTITION,
+                  service: "servicecatalog",
+                  region: Aws.REGION,
+                  account: Aws.ACCOUNT_ID,
+                  resource: "applications",
+                  resourceName: `*`,
+                  arnFormat: ArnFormat.SLASH_RESOURCE_SLASH_RESOURCE_NAME,
+                }),
+              ],
+            }),
+          ],
+        }),
+        ExistingDistributionPolicy: new PolicyDocument({
+          statements: [
+            new PolicyStatement({
+              effect: Effect.ALLOW,
+              actions: ["cloudfront:GetDistribution"],
+              resources: [
+                Stack.of(this).formatArn({
+                  partition: Aws.PARTITION,
+                  service: "cloudfront",
+                  region: "",
+                  account: Aws.ACCOUNT_ID,
+                  resource: `distribution/${props.existingCloudFrontDistributionId}`,
+                  arnFormat: ArnFormat.COLON_RESOURCE_NAME,
+                }),
+              ],
+            }),
+          ],
+        }),
       },
     });
 
@@ -124,6 +202,10 @@ export class CustomResourcesConstruct extends Construct {
         id: "W11",
         reason:
           "Allow '*' because it is required for making DescribeRegions API call as it doesn't support resource-level permissions and require to choose all resources.",
+      },
+      {
+        id: "F10",
+        reason: "Using inline policy",
       },
     ]);
 
@@ -155,15 +237,15 @@ export class CustomResourcesConstruct extends Construct {
       document: new PolicyDocument({
         statements: [
           new PolicyStatement({
-            actions: ["s3:GetObject", "s3:PutObject",],
+            actions: ["s3:GetObject", "s3:PutObject"],
             resources: [websiteHostingBucket.bucketArn + "/*"],
           }),
         ],
       }),
       roles: [this.customResourceRole],
-    })
+    });
     addCfnCondition(websiteHostingBucketPolicy, this.conditions.deployUICondition);
-  };
+  }
 
   public setupAnonymousMetric(props: AnonymousMetricCustomResourceProps) {
     this.createCustomResource("CustomResourceAnonymousMetric", this.customResourceLambda, {
@@ -178,6 +260,9 @@ export class CustomResourcesConstruct extends Construct {
       AutoWebP: props.autoWebP,
       EnableSignature: props.enableSignature,
       EnableDefaultFallbackImage: props.enableDefaultFallbackImage,
+      EnableS3ObjectLambda: props.enableS3ObjectLambda,
+      OriginShieldRegion: props.originShieldRegion,
+      UseExistingCloudFrontDistribution: props.useExistingCloudFrontDistribution,
     });
   }
 
@@ -187,6 +272,35 @@ export class CustomResourcesConstruct extends Construct {
       Region: Aws.REGION,
       SourceBuckets: props.sourceBuckets,
     });
+
+    const regionedBucketValidationResults = this.createCustomResource(
+      "CustomResourceCheckFirstBucketRegion",
+      this.customResourceLambda,
+      {
+        CustomAction: "checkFirstBucketRegion",
+        Region: Aws.REGION,
+        SourceBuckets: Fn.select(0, Fn.split(",", props.sourceBuckets)), // Only pass the first bucket to prevent unecessary execution on SourceBucketsParameter changes
+        UUID: this.uuid,
+        S3ObjectLambda: props.enableS3ObjectLambda,
+      }
+    );
+    this.regionedBucketName = Lazy.string({
+      produce: () => regionedBucketValidationResults.getAttString("BucketName"),
+    });
+    this.regionedBucketHash = Lazy.string({
+      produce: () => regionedBucketValidationResults.getAttString("BucketHash"),
+    });
+
+    const getAppRegApplicationNameResults = this.createCustomResource(
+      "CustomResourceGetAppRegApplicationName",
+      this.customResourceLambda,
+      {
+        CustomAction: "getAppRegApplicationName",
+        Region: Aws.REGION,
+        DefaultName: Fn.join("-", ["AppRegistry", Aws.STACK_NAME, Aws.REGION, Aws.ACCOUNT_ID]),
+      }
+    );
+    this.appRegApplicationName = getAppRegApplicationNameResults.getAttString("ApplicationName");
 
     this.createCustomResource(
       "CustomResourceCheckFallbackImage",
@@ -204,9 +318,7 @@ export class CustomResourcesConstruct extends Construct {
     // Stage static assets for the front-end from the local
     /* eslint-disable no-new */
     const bucketDeployment = new BucketDeployment(this, "DeployWebsite", {
-      sources: [
-        S3Source.asset(path.join(__dirname, "../../../../demo-ui"), { exclude: ["node_modules/*"] }),
-      ],
+      sources: [S3Source.asset(path.join(__dirname, "../../../../demo-ui"), { exclude: ["node_modules/*"] })],
       destinationBucket: props.hostingBucket,
       exclude: ["demo-ui-config.js"],
     });
@@ -220,7 +332,7 @@ export class CustomResourcesConstruct extends Construct {
       {
         CustomAction: "putConfigFile",
         Region: Aws.REGION,
-        ConfigItem: { apiEndpoint: `https://${props.apiEndpoint}` },
+        ConfigItem: { apiEndpoint: props.apiEndpoint },
         DestS3Bucket: props.hostingBucket.bucketName,
         DestS3key: "demo-ui-config.js",
       },
@@ -239,6 +351,20 @@ export class CustomResourcesConstruct extends Construct {
       },
       this.conditions.enableSignatureCondition
     );
+  }
+
+  public setupValidateExistingDistribution(props: SetupValidateExistingDistributionProps) {
+    const validateExistingDistributionResults = this.createCustomResource(
+      "CustomResourceValidateExistingDistribution",
+      this.customResourceLambda,
+      {
+        CustomAction: "validateExistingDistribution",
+        Region: Aws.REGION,
+        ExistingDistributionID: props.existingDistributionId,
+      },
+      props.condition
+    );
+    this.existingDistributionDomainName = validateExistingDistributionResults.getAttString("DistributionDomainName");
   }
 
   public createLogBucket(): IBucket {
@@ -262,18 +388,18 @@ export class CustomResourcesConstruct extends Construct {
 
   public createSourceBucketsResource(resourceName: string = "") {
     return Fn.split(
-      ',',
+      ",",
       Fn.sub(
         `arn:aws:s3:::\${rest}${resourceName}`,
 
         {
           rest: Fn.join(
             `${resourceName},arn:aws:s3:::`,
-            Fn.split(",", Fn.join("", Fn.split(" ", Fn.ref('SourceBucketsParameter'))))
+            Fn.split(",", Fn.join("", Fn.split(" ", Fn.ref("SourceBucketsParameter"))))
           ),
-        },
-      ),
-    )
+        }
+      )
+    );
   }
 
   private createCustomResource(

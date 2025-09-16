@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import S3 from "aws-sdk/clients/s3";
+import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { createHmac } from "crypto";
 
 import {
@@ -31,7 +31,7 @@ type OriginalImageInfo = Partial<{
 export class ImageRequest {
   private static readonly DEFAULT_EFFORT = 4;
 
-  constructor(private readonly s3Client: S3, private readonly secretProvider: SecretProvider) {}
+  constructor(private readonly s3Client: S3Client, private readonly secretProvider: SecretProvider) {}
 
   /**
    * Determines the output format of an image
@@ -159,7 +159,8 @@ export class ImageRequest {
       let originalImage;
       try {
         console.info("Getting image from S3:", imageLocation);
-        originalImage = await this.s3Client.getObject(imageLocation).promise();
+        const response = await this.s3Client.send(new GetObjectCommand(imageLocation));
+        originalImage = await response.Body?.transformToByteArray();
       } catch (error) {
         console.error(error);
         throw new ImageHandlerError(
@@ -466,17 +467,7 @@ export class ImageRequest {
    * @returns A formatted image source bucket.
    */
   public getAllowedSourceBuckets(): string[] {
-    const { SOURCE_BUCKETS } = process.env;
-
-    if (SOURCE_BUCKETS === undefined) {
-      throw new ImageHandlerError(
-        StatusCodes.BAD_REQUEST,
-        "GetAllowedSourceBuckets::NoSourceBuckets",
-        "The SOURCE_BUCKETS variable could not be read. Please check that it is not empty and contains at least one source bucket, or multiple buckets separated by commas. Spaces can be provided between commas and bucket names, these will be automatically parsed out when decoding."
-      );
-    } else {
-      return SOURCE_BUCKETS.replace(/\s+/g, "").split(",");
-    }
+    return getAllowedSourceBuckets();
   }
 
   /**
@@ -575,5 +566,67 @@ export class ImageRequest {
         );
       }
     }
+  }
+
+  /**
+   * Parse query string parameters into image edits.
+   * @param event Lambda request body.
+   * @param requestType The request type.
+   * @returns Image edits based on query parameters.
+   */
+  public parseQueryParamEdits(event: ImageHandlerEvent, requestType?: RequestTypes): ImageEdits {
+    const edits: ImageEdits = {};
+    const { queryStringParameters } = event;
+
+    if (!queryStringParameters) {
+      return edits;
+    }
+
+    // Parse resize parameters
+    if (queryStringParameters.width || queryStringParameters.height) {
+      edits.resize = {};
+      if (queryStringParameters.width) {
+        edits.resize.width = parseInt(queryStringParameters.width, 10);
+      }
+      if (queryStringParameters.height) {
+        edits.resize.height = parseInt(queryStringParameters.height, 10);
+      }
+    }
+
+    // Parse rotate parameter
+    if (queryStringParameters.rotate) {
+      edits.rotate = parseInt(queryStringParameters.rotate, 10);
+    }
+
+    // Parse flip parameter
+    if (queryStringParameters.flip) {
+      edits.flip = queryStringParameters.flip === "1" || queryStringParameters.flip === "true";
+    }
+
+    // Parse flop parameter
+    if (queryStringParameters.flop) {
+      edits.flop = queryStringParameters.flop === "1" || queryStringParameters.flop === "true";
+    }
+
+    return edits;
+  }
+}
+
+/**
+ * Returns a formatted image source bucket allowed list as specified in the SOURCE_BUCKETS environment variable of the image handler Lambda function.
+ * Provides error handling for missing/invalid values.
+ * @returns A formatted image source bucket.
+ */
+export function getAllowedSourceBuckets(): string[] {
+  const { SOURCE_BUCKETS } = process.env;
+
+  if (SOURCE_BUCKETS === undefined) {
+    throw new ImageHandlerError(
+      StatusCodes.BAD_REQUEST,
+      "GetAllowedSourceBuckets::NoSourceBuckets",
+      "The SOURCE_BUCKETS variable could not be read. Please check that it is not empty and contains at least one source bucket, or multiple buckets separated by commas. Spaces can be provided between commas and bucket names, these will be automatically parsed out when decoding."
+    );
+  } else {
+    return SOURCE_BUCKETS.replace(/\s+/g, "").split(",");
   }
 }

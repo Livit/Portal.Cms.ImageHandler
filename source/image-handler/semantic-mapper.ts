@@ -43,8 +43,8 @@ export class SemanticMapper {
    * @returns Image edits associated with resize.
    */
   private mapResize(queryParams: {
-    h?: string | number,
-    w?: string | number
+    h?: string,
+    w?: string
   }): ImageEdits {
 
     if (this.isSvg || (!queryParams?.w && !queryParams?.h)) {
@@ -72,15 +72,15 @@ export class SemanticMapper {
    * @param path An image path.
    * @returns Image edits associated with fit-in filter.
    */
-  private mapFitIn(fit: ImageFitTypes): ImageEdits {
+  private mapFitIn(fit?: string): ImageEdits {
 
     // Allow for thumb to be used as synonym for cover
     if ((fit as any) === "thumb") {
       return { resize: { fit: ImageFitTypes.COVER } };
     }
 
-    if (Object.values(ImageFitTypes).includes(fit)) {
-      return { resize: { fit } };
+    if (Object.values(ImageFitTypes).includes(fit as ImageFitTypes)) {
+      return { resize: { fit: fit as ImageFitTypes } };
     }
 
     return this.EMPTY_IMAGE_EDITS;

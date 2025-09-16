@@ -5,6 +5,123 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.0.6] - 2025-07-28
+
+### Security
+- Bump `form-data` to mitigate [CVE-2025-7783](https://github.com/advisories/GHSA-fjxv-7rqg-78g4)
+
+## [7.0.5] - 2025-07-07
+
+### Changed
+
+- Migrated to [AWS SDK for JavaScript v3](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/introduction/)
+- Bundling instruction for sharp module as per [cross-platform installation instruction](https://sharp.pixelplumbing.com/install/#npm-v10)
+- Bumped dependencies
+
+### Fixed
+
+- Return image metadata for all cases by default using [withMetadata()](https://sharp.pixelplumbing.com/api-output/#withmetadata)
+- In thumbor-styled requests, align `filters:rotate()` with sharp [rotate behavior](https://sharp.pixelplumbing.com/api-operation/#rotate), if no angle is provided `autoOrient()` will be called
+
+## [7.0.4] - 2025-06-09
+
+### Security
+
+- Bump `tar-fs` to mitigate [CVE-2025-48387](https://avd.aquasec.com/nvd/cve-2025-48387)
+- Bump `aws-cdk-lib` to mitigate [GHSA-5pq3-h73f-66hr](https://github.com/advisories/GHSA-5pq3-h73f-66hr)
+
+## [7.0.3] - 2025-05-10
+
+### Fixed
+
+- `SOLUTION_VERSION` environment variable in metrics lambda construct
+
+## [7.0.2] - 2025-04-09
+
+### Security
+
+- Bump aws-cdk-lib to `2.188.0`
+- Update solution metrics lambda runtime to `nodejs22.x`
+
+## [7.0.1] - 2025-03-14
+
+### Changed
+
+- Updated metrics module to support identical metrics for different resources
+- Updated aws-cdk-lib and aws-cdk package versions
+
+### Security
+
+- Upgraded esbuild to v0.25.0 for advisory [GHSA-67mh-4wv8-2f99](https://github.com/advisories/GHSA-67mh-4wv8-2f99)
+- Upgraded axios to 1.8.2 for advisory [GHSA-jr5f-v2jv-69x6](https://github.com/axios/axios/security/advisories/GHSA-jr5f-v2jv-69x6)
+
+### Fixed
+
+- Minor eslint warnings
+
+## [7.0.0] - 2025-01-27
+
+### Changed
+
+- Location of API Gateway infrastructure resources
+- **Breaking** New condition on API gateway will cause a delete/create of ApiGateway::Deployment on stack update
+- **Breaking:** Exception thrown on invalid resize parameters [#463](https://github.com/aws-solutions/serverless-image-handler/pull/463)
+- Code formatting to align with ESLint rules
+- **Breaking** Reduced passthrough of errors from external APIs to response body. Errors will still be logged.
+- Modified CloudFront logging bucket to have versioning enabled by default
+- CloudFront behaviour to redirect http requests to https rather than throwing forbidden error
+- Set-Cookie was added to list of deny-listed response headers
+- Name of solution from Serverless Image Handler on AWS to Dynamic Image Transformation for Amazon CloudFront.
+
+### Added
+
+- Ability to enable origin shield through a deployment parameter
+- Ability to deploy solution without creating a CloudFront distribution
+- CloudFront function to normalize accept headers when AutoWebP is enabled
+- Alternative infrastructure using S3 Object Lambda to overcome 6 MB response size limit
+- Query param named expires which can be used to define when a generated image should no longer be accessible
+- Ability to include smart_crop as a filter for Thumbor style requests, taking advantage of AWS Rekognition face cropping
+- Ability to set CloudWatch log retention period to Infinite
+- Ability to specify Sharp input image size limit [#465](https://github.com/aws-solutions/serverless-image-handler/issues/465) [#476](https://github.com/aws-solutions/serverless-image-handler/pull/476)
+- Query parameter based image editing [#184](https://github.com/aws-solutions/serverless-image-handler/issues/184)
+- Query parameter normalization to improve cache hit rate
+- CloudWatch dashboard to improve Solution observability
+- Additional anonymized metrics to help understand how the solution is being used, identify areas of improvement, and drive future roadmap decisions.
+
+### Removed
+
+- Accept header being used in cache policy when AutoWebP is disabled
+
+### Fixed
+
+- Broken URLs in Signature and Fallback Image template parameters
+
+## [6.3.3] - 2024-12-27
+
+### Fixed
+
+- Overlays not checking for valid S3 buckets
+- Failures when updating deployments created in version 6.1.0 and prior [#559](https://github.com/aws-solutions/serverless-image-handler/issues/559)
+
+### Security
+
+- Added allowlist on sharp operations. [Info](https://docs.aws.amazon.com/solutions/latest/serverless-image-handler/create-and-use-image-requests.html#restricted-operations)
+- Added deny list on custom headers for base64 encoded requests. [Info](https://docs.aws.amazon.com/solutions/latest/serverless-image-handler/create-and-use-image-requests.html#include-custom-response-headers)
+- Added inference of Content-Type header if S3 Metadata provides an unsupported value
+
+## [6.3.2] - 2024-11-22
+
+### Fixed
+
+- Upgrade cross-spawn to v7.0.6 for vulnerability [CVE-2024-9506](https://github.com/advisories/GHSA-5j4c-8p2g-v4jx)
+
+## [6.3.1] - 2024-10-02
+
+### Fixed
+
+- Base-64 encoded overlayWith call requiring strings in top/left options rather than numbers
+- CloudFront anonymized metrics missing for deployments outside of us-east-1
+
 ## [6.3.0] - 2024-09-09
 
 ### Added

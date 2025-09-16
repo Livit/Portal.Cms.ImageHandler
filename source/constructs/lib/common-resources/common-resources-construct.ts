@@ -21,12 +21,19 @@ export interface Conditions {
   readonly enableSignatureCondition: CfnCondition;
   readonly enableDefaultFallbackImageCondition: CfnCondition;
   readonly enableCorsCondition: CfnCondition;
+  readonly autoWebPCondition: CfnCondition;
+  readonly enableOriginShieldCondition: CfnCondition;
+  readonly enableS3ObjectLambdaCondition: CfnCondition;
+  readonly disableS3ObjectLambdaCondition: CfnCondition;
+  readonly isLogRetentionPeriodInfinite: CfnCondition;
+  readonly useExistingCloudFrontDistributionCondition: CfnCondition;
 }
 
 export interface AppRegistryApplicationProps {
   readonly description: string;
   readonly solutionId: string;
   readonly applicationName: string;
+  readonly solutionName: string;
   readonly solutionVersion: string;
 }
 
@@ -54,6 +61,24 @@ export class CommonResources extends Construct {
       }),
       enableCorsCondition: new CfnCondition(this, "EnableCorsCondition", {
         expression: Fn.conditionEquals(props.corsEnabled, "Yes"),
+      }),
+      autoWebPCondition: new CfnCondition(this, "AutoWebPCondition", {
+        expression: Fn.conditionEquals(props.autoWebP, "Yes"),
+      }),
+      enableOriginShieldCondition: new CfnCondition(this, "EnableOriginShieldCondition", {
+        expression: Fn.conditionNot(Fn.conditionEquals(props.originShieldRegion, "Disabled")),
+      }),
+      enableS3ObjectLambdaCondition: new CfnCondition(this, "EnableS3ObjectLambdaCondition", {
+        expression: Fn.conditionEquals(props.enableS3ObjectLambda, "Yes"),
+      }),
+      disableS3ObjectLambdaCondition: new CfnCondition(this, "DisableS3ObjectLambdaCondition", {
+        expression: Fn.conditionNot(Fn.conditionEquals(props.enableS3ObjectLambda, "Yes")),
+      }),
+      isLogRetentionPeriodInfinite: new CfnCondition(this, "IsLogRetentionPeriodInfinite", {
+        expression: Fn.conditionEquals(props.logRetentionPeriod, "Infinite"),
+      }),
+      useExistingCloudFrontDistributionCondition: new CfnCondition(this, "UseExistingCloudFrontDistributionCondition", {
+        expression: Fn.conditionEquals(props.useExistingCloudFrontDistribution, "Yes"),
       }),
     };
 
@@ -91,13 +116,13 @@ export class CommonResources extends Construct {
     const applicationType = "AWS-Solutions";
 
     const application = new appreg.Application(stack, "AppRegistry", {
-      applicationName: Fn.join("-", ["AppRegistry", Aws.STACK_NAME, Aws.REGION, Aws.ACCOUNT_ID]),
-      description: `Service Catalog application to track and manage all your resources for the solution ${props.applicationName}`,
+      applicationName: props.applicationName,
+      description: `Service Catalog application to track and manage all your resources for the solution ${props.solutionName}`,
     });
     application.associateApplicationWithStack(stack);
 
     Tags.of(application).add("Solutions:SolutionID", props.solutionId);
-    Tags.of(application).add("Solutions:SolutionName", props.applicationName);
+    Tags.of(application).add("Solutions:SolutionName", props.solutionName);
     Tags.of(application).add("Solutions:SolutionVersion", props.solutionVersion);
     Tags.of(application).add("Solutions:ApplicationType", applicationType);
 
@@ -108,7 +133,7 @@ export class CommonResources extends Construct {
         applicationType,
         version: props.solutionVersion,
         solutionID: props.solutionId,
-        solutionName: props.applicationName,
+        solutionName: props.solutionName,
       },
     });
     attributeGroup.associateWith(application);

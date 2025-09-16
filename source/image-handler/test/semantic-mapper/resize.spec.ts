@@ -10,8 +10,8 @@ describe("resize", () => {
       path: "/test-image-001.jpg",
       queryStringParameters: {
         signature: "dummySig",
-        w: 400,
-        h: 300,
+        w: "400",
+        h: "300",
       },
     };
 
@@ -32,7 +32,7 @@ describe("resize", () => {
       path: "/test-image-001.jpg",
       queryStringParameters: {
         signature: "dummySig",
-        h: 300,
+        h: "300",
       },
     };
 
@@ -53,7 +53,7 @@ describe("resize", () => {
       path: "/test-image-001.jpg",
       queryStringParameters: {
         signature: "dummySig",
-        w: 400,
+        w: "400",
       },
     };
 

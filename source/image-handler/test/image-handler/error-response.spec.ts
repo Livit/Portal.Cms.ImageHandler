@@ -15,20 +15,6 @@ describe("getErrorResponse", () => {
     });
   });
 
-  it('should handle "Image to composite must have same dimensions or smaller" error', () => {
-    const error = { message: "Image to composite must have same dimensions or smaller" };
-    const result = getErrorResponse(error);
-
-    expect(result).toEqual({
-      statusCode: StatusCodes.BAD_REQUEST,
-      body: JSON.stringify({
-        message: "Image to overlay must have same dimensions or smaller",
-        code: "BadRequest",
-        status: StatusCodes.BAD_REQUEST,
-      }),
-    });
-  });
-
   it("should handle other errors and return INTERNAL_SERVER_ERROR", () => {
     const error = { message: "Some other error" };
     const result = getErrorResponse(error);
