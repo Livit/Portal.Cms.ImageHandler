@@ -4,6 +4,7 @@
 // Mock AWS SDK v3 S3 client
 export const mockAwsS3 = {
   send: jest.fn(),
+  getObject: jest.fn(),
 };
 
 export const mockS3Commands = {

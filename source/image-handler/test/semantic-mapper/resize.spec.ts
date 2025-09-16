@@ -74,8 +74,8 @@ describe("resize", () => {
       path: "/test-image-001.jpg",
       queryStringParameters: {
         signature: "dummySig",
-        w: 0,
-        h: 0
+        w: "0",
+        h: "0"
       },
     };
 

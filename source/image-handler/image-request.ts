@@ -569,6 +569,21 @@ export class ImageRequest {
   }
 
   /**
+   * Recreate query string from parameters, excluding signature.
+   * @param queryParams Query string parameters.
+   * @returns Recreated query string without signature.
+   */
+  public recreateQueryString(queryParams: { [key: string]: string }): string {
+    const filteredParams = { ...queryParams };
+    delete filteredParams.signature;
+    
+    return Object.keys(filteredParams)
+      .sort()
+      .map(key => `${key}=${filteredParams[key]}`)
+      .join('&');
+  }
+
+  /**
    * Parse query string parameters into image edits.
    * @param event Lambda request body.
    * @param requestType The request type.
