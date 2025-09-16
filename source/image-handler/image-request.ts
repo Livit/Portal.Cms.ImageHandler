@@ -19,6 +19,7 @@ import {
 import { SecretProvider } from "./secret-provider";
 import { ThumborMapper } from "./thumbor-mapper";
 import { SemanticMapper } from "./semantic-mapper";
+import { PortalMapper } from "./portal-mapper";
 
 type OriginalImageInfo = Partial<{
   contentType: string;
@@ -281,6 +282,9 @@ export class ImageRequest {
       case RequestTypes.SEMANTIC:
         const semanticMapping = new SemanticMapper();
         return semanticMapping.mapPathToEdits(event);
+      case RequestTypes.PORTAL:
+        const portalMapping = new PortalMapper();
+        return portalMapping.mapPathToEdits(event.path);
       case RequestTypes.CUSTOM:
         const customMapping = new ThumborMapper();
         const parsedPath = customMapping.parseCustomPath(event.path);

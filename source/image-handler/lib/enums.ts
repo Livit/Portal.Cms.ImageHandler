@@ -16,6 +16,7 @@ export enum RequestTypes {
   CUSTOM = "Custom",
   THUMBOR = "Thumbor",
   SEMANTIC = "Semantic",
+  PORTAL = "Portal",
 }
 
 export enum ImageFormatTypes {
